@@ -10,6 +10,7 @@ A Clarity smart contract that enables **fractional real estate ownership** throu
 - 🔄 **Token Transfers** - Trade ownership stakes with other investors
 - 📊 **Property Management** - Update valuations and property status
 - 💎 **Metadata Support** - Store detailed property information
+- 🎯 **Property Auctions** - Competitive bidding system for property sales
 
 ## 🚀 Getting Started
 
@@ -73,6 +74,30 @@ clarinet console
 (contract-call? .real-estate-tokenization-contract claim-dividends u1)
 ```
 
+### 6. Create Property Auction 🎯
+
+```clarity
+;; Property owner creates auction for 100 blocks duration
+(contract-call? .real-estate-tokenization-contract create-auction 
+  u1        ;; Property ID
+  u800000   ;; Starting price
+  u100)     ;; Duration in blocks
+```
+
+### 7. Place Bid on Property 💰
+
+```clarity
+(contract-call? .real-estate-tokenization-contract place-bid
+  u1        ;; Auction ID
+  u900000)  ;; Bid amount
+```
+
+### 8. Finalize Auction (after end block) 🏆
+
+```clarity
+(contract-call? .real-estate-tokenization-contract finalize-auction u1)
+```
+
 ## 📊 Read Functions
 
 ### Get Property Information
@@ -93,6 +118,12 @@ clarinet console
   u1 'SP2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ7)
 ```
 
+### Get Auction Information
+```clarity
+(contract-call? .real-estate-tokenization-contract get-auction u1)
+(contract-call? .real-estate-tokenization-contract get-auction-bid u1 'SP2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ7)
+```
+
 ## 🏗️ Contract Architecture
 
 ### Core Data Structures
@@ -101,6 +132,8 @@ clarinet console
 - **Token Balances Map** - Tracks ownership distribution across holders
 - **Property Dividends Map** - Manages dividend pools and distribution rates
 - **Claimed Dividends Map** - Records dividend withdrawals by holders
+- **Property Auctions Map** - Manages auction lifecycle and bidding data
+- **Auction Bids Map** - Tracks individual bidder amounts per auction
 
 ### Key Functions
 
@@ -112,6 +145,9 @@ clarinet console
 | `distribute-dividends` | Add funds to dividend pool | Property owner |
 | `claim-dividends` | Withdraw earned dividends | Token holders |
 | `update-property-value` | Adjust property valuation | Property owner |
+| `create-auction` | Start competitive property sale | Property owner |
+| `place-bid` | Bid on property auction | Anyone |
+| `finalize-auction` | Complete sale to highest bidder | Anyone (after end) |
 
 ## 🔐 Security Features
 
@@ -119,6 +155,7 @@ clarinet console
 - ✅ Balance validation for all token transfers  
 - ✅ Active property status checks
 - ✅ Dividend calculation accuracy
+- ✅ Auction timing and bidding constraints
 - ✅ Proper error handling with descriptive codes
 
 ## 🧪 Testing
@@ -153,6 +190,7 @@ This project is licensed under the MIT License.
 - **Rental Income Distribution** 💰
 - **Property Crowdfunding** 👥
 - **Real Estate Liquid Markets** 📊
+- **Property Exit Strategies via Auctions** 🎯
 
 ---
 
