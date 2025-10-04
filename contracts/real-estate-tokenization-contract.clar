@@ -11,9 +11,17 @@
 (define-constant err-auction-active (err u109))
 (define-constant err-bid-too-low (err u110))
 (define-constant err-not-highest-bidder (err u111))
+(define-constant err-proposal-not-found (err u112))
+(define-constant err-voting-ended (err u113))
+(define-constant err-voting-active (err u114))
+(define-constant err-already-voted (err u115))
+(define-constant err-quorum-not-met (err u116))
+(define-constant err-proposal-rejected (err u117))
+(define-constant err-insufficient-stake (err u118))
 
 (define-data-var property-counter uint u0)
 (define-data-var auction-counter uint u0)
+(define-data-var proposal-counter uint u0)
 
 (define-map properties
   { property-id: uint }
@@ -77,6 +85,28 @@
   { bid-amount: uint }
 )
 
+(define-map governance-proposals
+  { proposal-id: uint }
+  {
+    property-id: uint,
+    proposer: principal,
+    title: (string-ascii 100),
+    description: (string-ascii 300),
+    proposal-type: (string-ascii 20),
+    amount-requested: uint,
+    yes-votes: uint,
+    no-votes: uint,
+    end-block: uint,
+    executed: bool,
+    active: bool
+  }
+)
+
+(define-map proposal-votes
+  { proposal-id: uint, voter: principal }
+  { vote-weight: uint, vote-for: bool }
+)
+
 (define-read-only (get-property (property-id uint))
   (map-get? properties { property-id: property-id })
 )
@@ -111,6 +141,22 @@
 
 (define-read-only (get-auction-counter)
   (var-get auction-counter)
+)
+
+(define-read-only (get-proposal (proposal-id uint))
+  (map-get? governance-proposals { proposal-id: proposal-id })
+)
+
+(define-read-only (get-proposal-vote (proposal-id uint) (voter principal))
+  (map-get? proposal-votes { proposal-id: proposal-id, voter: voter })
+)
+
+(define-read-only (get-proposal-counter)
+  (var-get proposal-counter)
+)
+
+(define-read-only (has-voted (proposal-id uint) (voter principal))
+  (is-some (get-proposal-vote proposal-id voter))
 )
 
 (define-read-only (calculate-dividend-share (property-id uint) (holder principal))
@@ -449,3 +495,139 @@
     (ok auction-id)
   )
 )
+
+(define-public (create-proposal 
+  (property-id uint)
+  (title (string-ascii 100))
+  (description (string-ascii 300))
+  (proposal-type (string-ascii 20))
+  (amount-requested uint)
+  (voting-duration uint)
+)
+  (let (
+    (property-info (unwrap! (get-property property-id) err-not-found))
+    (proposer-balance (get-token-balance property-id tx-sender))
+    (min-stake (/ (get total-tokens property-info) u100))
+    (proposal-id (+ (var-get proposal-counter) u1))
+    (end-block (+ stacks-block-height voting-duration))
+  )
+    (asserts! (>= proposer-balance min-stake) err-insufficient-stake)
+    (asserts! (> voting-duration u0) err-invalid-amount)
+    
+    (map-set governance-proposals
+      { proposal-id: proposal-id }
+      {
+        property-id: property-id,
+        proposer: tx-sender,
+        title: title,
+        description: description,
+        proposal-type: proposal-type,
+        amount-requested: amount-requested,
+        yes-votes: u0,
+        no-votes: u0,
+        end-block: end-block,
+        executed: false,
+        active: true
+      }
+    )
+    
+    (var-set proposal-counter proposal-id)
+    (ok proposal-id)
+  )
+)
+
+(define-public (vote-on-proposal (proposal-id uint) (vote-for bool))
+  (let (
+    (proposal-info (unwrap! (get-proposal proposal-id) err-proposal-not-found))
+    (voter-tokens (get-token-balance (get property-id proposal-info) tx-sender))
+    (current-yes-votes (get yes-votes proposal-info))
+    (current-no-votes (get no-votes proposal-info))
+  )
+    (asserts! (get active proposal-info) err-voting-ended)
+    (asserts! (<= stacks-block-height (get end-block proposal-info)) err-voting-ended)
+    (asserts! (> voter-tokens u0) err-insufficient-tokens)
+    (asserts! (not (has-voted proposal-id tx-sender)) err-already-voted)
+    
+    (map-set proposal-votes
+      { proposal-id: proposal-id, voter: tx-sender }
+      { vote-weight: voter-tokens, vote-for: vote-for }
+    )
+    
+    (map-set governance-proposals
+      { proposal-id: proposal-id }
+      (merge proposal-info {
+        yes-votes: (if vote-for (+ current-yes-votes voter-tokens) current-yes-votes),
+        no-votes: (if vote-for current-no-votes (+ current-no-votes voter-tokens))
+      })
+    )
+    
+    (ok voter-tokens)
+  )
+)
+
+(define-public (execute-proposal (proposal-id uint))
+  (let (
+    (proposal-info (unwrap! (get-proposal proposal-id) err-proposal-not-found))
+    (property-info (unwrap! (get-property (get property-id proposal-info)) err-not-found))
+    (total-votes (+ (get yes-votes proposal-info) (get no-votes proposal-info)))
+    (total-tokens (get total-tokens property-info))
+    (quorum-threshold (/ total-tokens u2))
+    (vote-passed (> (get yes-votes proposal-info) (get no-votes proposal-info)))
+  )
+    (asserts! (get active proposal-info) err-voting-ended)
+    (asserts! (> stacks-block-height (get end-block proposal-info)) err-voting-active)
+    (asserts! (not (get executed proposal-info)) err-already-exists)
+    (asserts! (>= total-votes quorum-threshold) err-quorum-not-met)
+    (asserts! vote-passed err-proposal-rejected)
+    
+    (if (> (get amount-requested proposal-info) u0)
+      (try! (as-contract (stx-transfer? (get amount-requested proposal-info) (as-contract tx-sender) (get proposer proposal-info))))
+      true
+    )
+    
+    (map-set governance-proposals
+      { proposal-id: proposal-id }
+      (merge proposal-info { executed: true, active: false })
+    )
+    
+    (ok proposal-id)
+  )
+)
+
+(define-public (cancel-proposal (proposal-id uint))
+  (let (
+    (proposal-info (unwrap! (get-proposal proposal-id) err-proposal-not-found))
+  )
+    (asserts! (is-eq tx-sender (get proposer proposal-info)) err-unauthorized)
+    (asserts! (get active proposal-info) err-voting-ended)
+    (asserts! (is-eq (+ (get yes-votes proposal-info) (get no-votes proposal-info)) u0) err-voting-active)
+    
+    (map-set governance-proposals
+      { proposal-id: proposal-id }
+      (merge proposal-info { active: false })
+    )
+    
+    (ok proposal-id)
+  )
+)
+
+(define-read-only (get-proposal-status (proposal-id uint))
+  (let (
+    (proposal-info (get-proposal proposal-id))
+  )
+    (match proposal-info
+      proposal-data (ok {
+        total-votes: (+ (get yes-votes proposal-data) (get no-votes proposal-data)),
+        yes-percentage: (if (> (+ (get yes-votes proposal-data) (get no-votes proposal-data)) u0)
+                           (/ (* (get yes-votes proposal-data) u100) (+ (get yes-votes proposal-data) (get no-votes proposal-data)))
+                           u0),
+        is-passing: (> (get yes-votes proposal-data) (get no-votes proposal-data)),
+        time-remaining: (if (> (get end-block proposal-data) stacks-block-height)
+                          (- (get end-block proposal-data) stacks-block-height)
+                          u0)
+      })
+      err-proposal-not-found
+    )
+  )
+)
+ 

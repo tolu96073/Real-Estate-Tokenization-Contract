@@ -11,6 +11,7 @@ A Clarity smart contract that enables **fractional real estate ownership** throu
 - 📊 **Property Management** - Update valuations and property status
 - 💎 **Metadata Support** - Store detailed property information
 - 🎯 **Property Auctions** - Competitive bidding system for property sales
+- 🗳️ **Decentralized Governance** - Token-weighted voting on property decisions
 
 ## 🚀 Getting Started
 
@@ -98,6 +99,35 @@ clarinet console
 (contract-call? .real-estate-tokenization-contract finalize-auction u1)
 ```
 
+### 9. Create Governance Proposal 🗳️
+
+```clarity
+;; Token holder creates proposal (requires 1% minimum stake)
+(contract-call? .real-estate-tokenization-contract create-proposal
+  u1                              ;; Property ID
+  "Pool Renovation"               ;; Title
+  "Renovate pool area and add new tiles"  ;; Description
+  "maintenance"                   ;; Proposal type
+  u50000                          ;; Amount requested
+  u144)                           ;; Voting duration (blocks)
+```
+
+### 10. Vote on Proposal 📊
+
+```clarity
+;; Vote weighted by token balance
+(contract-call? .real-estate-tokenization-contract vote-on-proposal
+  u1      ;; Proposal ID
+  true)   ;; Vote for (true) or against (false)
+```
+
+### 11. Execute Approved Proposal ✅
+
+```clarity
+;; Anyone can execute after voting ends if passed
+(contract-call? .real-estate-tokenization-contract execute-proposal u1)
+```
+
 ## 📊 Read Functions
 
 ### Get Property Information
@@ -124,6 +154,13 @@ clarinet console
 (contract-call? .real-estate-tokenization-contract get-auction-bid u1 'SP2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ7)
 ```
 
+### Get Governance Proposal Information
+```clarity
+(contract-call? .real-estate-tokenization-contract get-proposal u1)
+(contract-call? .real-estate-tokenization-contract get-proposal-status u1)
+(contract-call? .real-estate-tokenization-contract has-voted u1 'SP2J6ZY48GV1EZ5V2V5RB9MP66SW86PYKKNRV9EJ7)
+```
+
 ## 🏗️ Contract Architecture
 
 ### Core Data Structures
@@ -134,6 +171,8 @@ clarinet console
 - **Claimed Dividends Map** - Records dividend withdrawals by holders
 - **Property Auctions Map** - Manages auction lifecycle and bidding data
 - **Auction Bids Map** - Tracks individual bidder amounts per auction
+- **Governance Proposals Map** - Stores voting proposals and results
+- **Proposal Votes Map** - Records individual votes with weight and direction
 
 ### Key Functions
 
@@ -148,6 +187,9 @@ clarinet console
 | `create-auction` | Start competitive property sale | Property owner |
 | `place-bid` | Bid on property auction | Anyone |
 | `finalize-auction` | Complete sale to highest bidder | Anyone (after end) |
+| `create-proposal` | Submit governance proposal | Token holders (1%+) |
+| `vote-on-proposal` | Cast weighted vote on proposal | Token holders |
+| `execute-proposal` | Execute approved proposal | Anyone (after voting) |
 
 ## 🔐 Security Features
 
@@ -156,6 +198,7 @@ clarinet console
 - ✅ Active property status checks
 - ✅ Dividend calculation accuracy
 - ✅ Auction timing and bidding constraints
+- ✅ Democratic governance with quorum requirements
 - ✅ Proper error handling with descriptive codes
 
 ## 🧪 Testing
@@ -191,6 +234,7 @@ This project is licensed under the MIT License.
 - **Property Crowdfunding** 👥
 - **Real Estate Liquid Markets** 📊
 - **Property Exit Strategies via Auctions** 🎯
+- **Democratic Property Management DAOs** 🗳️
 
 ---
 
