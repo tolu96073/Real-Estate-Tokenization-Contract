@@ -18,6 +18,7 @@
 (define-constant err-quorum-not-met (err u116))
 (define-constant err-proposal-rejected (err u117))
 (define-constant err-insufficient-stake (err u118))
+(define-constant err-insufficient-allowance (err u119))
 
 (define-data-var property-counter uint u0)
 (define-data-var auction-counter uint u0)
@@ -41,6 +42,11 @@
 (define-map token-balances
   { property-id: uint, holder: principal }
   { balance: uint }
+)
+
+(define-map token-allowances
+  { property-id: uint, owner: principal, spender: principal }
+  { amount: uint }
 )
 
 (define-map property-dividends
@@ -117,6 +123,10 @@
 
 (define-read-only (get-token-balance (property-id uint) (holder principal))
   (default-to u0 (get balance (map-get? token-balances { property-id: property-id, holder: holder })))
+)
+
+(define-read-only (get-allowance (property-id uint) (owner principal) (spender principal))
+  (default-to u0 (get amount (map-get? token-allowances { property-id: property-id, owner: owner, spender: spender })))
 )
 
 (define-read-only (get-property-dividends (property-id uint))
@@ -272,6 +282,46 @@
     (map-set token-balances
       { property-id: property-id, holder: recipient }
       { balance: (+ recipient-balance amount) }
+    )
+    
+    (ok amount)
+  )
+)
+
+(define-public (approve-allowance (property-id uint) (spender principal) (amount uint))
+  (begin
+    (asserts! (> amount u0) err-invalid-amount)
+    (map-set token-allowances
+      { property-id: property-id, owner: tx-sender, spender: spender }
+      { amount: amount }
+    )
+    (ok amount)
+  )
+)
+
+(define-public (transfer-from (property-id uint) (owner principal) (recipient principal) (amount uint))
+  (let (
+    (allowance (get-allowance property-id owner tx-sender))
+    (owner-balance (get-token-balance property-id owner))
+    (recipient-balance (get-token-balance property-id recipient))
+  )
+    (asserts! (> amount u0) err-invalid-amount)
+    (asserts! (>= owner-balance amount) err-insufficient-tokens)
+    (asserts! (>= allowance amount) err-insufficient-allowance)
+    
+    (map-set token-balances
+      { property-id: property-id, holder: owner }
+      { balance: (- owner-balance amount) }
+    )
+    
+    (map-set token-balances
+      { property-id: property-id, holder: recipient }
+      { balance: (+ recipient-balance amount) }
+    )
+    
+    (map-set token-allowances
+      { property-id: property-id, owner: owner, spender: tx-sender }
+      { amount: (- allowance amount) }
     )
     
     (ok amount)
