@@ -19,6 +19,7 @@
 (define-constant err-proposal-rejected (err u117))
 (define-constant err-insufficient-stake (err u118))
 (define-constant err-insufficient-allowance (err u119))
+(define-constant err-not-allowed (err u120))
 
 (define-data-var property-counter uint u0)
 (define-data-var auction-counter uint u0)
@@ -47,6 +48,16 @@
 (define-map token-allowances
   { property-id: uint, owner: principal, spender: principal }
   { amount: uint }
+)
+
+(define-map property-allowlist-enabled
+  { property-id: uint }
+  { enabled: bool }
+)
+
+(define-map property-allowlist
+  { property-id: uint, user: principal }
+  { allowed: bool }
 )
 
 (define-map property-dividends
@@ -129,6 +140,14 @@
   (default-to u0 (get amount (map-get? token-allowances { property-id: property-id, owner: owner, spender: spender })))
 )
 
+(define-read-only (get-allowlist-enabled (property-id uint))
+  (default-to false (get enabled (map-get? property-allowlist-enabled { property-id: property-id })))
+)
+
+(define-read-only (is-allowed-buyer (property-id uint) (user principal))
+  (default-to false (get allowed (map-get? property-allowlist { property-id: property-id, user: user })))
+)
+
 (define-read-only (get-property-dividends (property-id uint))
   (map-get? property-dividends { property-id: property-id })
 )
@@ -199,6 +218,12 @@
   )
     (asserts! (> total-value u0) err-invalid-amount)
     (asserts! (> total-tokens u0) err-invalid-amount)
+    (asserts! (> (len name) u0) err-invalid-amount)
+    (asserts! (> (len description) u0) err-invalid-amount)
+    (asserts! (> (len location) u0) err-invalid-amount)
+    (asserts! (> (len property-type) u0) err-invalid-amount)
+    (asserts! (> size-sqft u0) err-invalid-amount)
+    (asserts! (> year-built u0) err-invalid-amount)
     
     (map-set properties 
       { property-id: property-id }
@@ -245,10 +270,13 @@
     (price-per-token (get price-per-token property-info))
     (total-cost (* token-amount price-per-token))
     (current-balance (get-token-balance property-id tx-sender))
+    (allowlist-enabled (default-to false (get enabled (map-get? property-allowlist-enabled { property-id: property-id }))))
+    (is-allowed (default-to false (get allowed (map-get? property-allowlist { property-id: property-id, user: tx-sender }))))
   )
     (asserts! (get active property-info) err-property-inactive)
     (asserts! (> token-amount u0) err-invalid-amount)
     (asserts! (>= (get available-tokens property-info) token-amount) err-insufficient-tokens)
+    (asserts! (or (not allowlist-enabled) is-allowed) err-not-allowed)
     
     (try! (stx-transfer? total-cost tx-sender (get owner property-info)))
     
@@ -273,6 +301,7 @@
   )
     (asserts! (>= sender-balance amount) err-insufficient-tokens)
     (asserts! (> amount u0) err-invalid-amount)
+    (asserts! (not (is-eq recipient tx-sender)) err-invalid-amount)
     
     (map-set token-balances
       { property-id: property-id, holder: tx-sender }
@@ -289,8 +318,11 @@
 )
 
 (define-public (approve-allowance (property-id uint) (spender principal) (amount uint))
-  (begin
+  (let (
+    (property-info (unwrap! (get-property property-id) err-not-found))
+  )
     (asserts! (> amount u0) err-invalid-amount)
+    (asserts! (not (is-eq spender tx-sender)) err-invalid-amount)
     (map-set token-allowances
       { property-id: property-id, owner: tx-sender, spender: spender }
       { amount: amount }
@@ -308,6 +340,7 @@
     (asserts! (> amount u0) err-invalid-amount)
     (asserts! (>= owner-balance amount) err-insufficient-tokens)
     (asserts! (>= allowance amount) err-insufficient-allowance)
+    (asserts! (not (is-eq recipient owner)) err-invalid-amount)
     
     (map-set token-balances
       { property-id: property-id, holder: owner }
@@ -383,6 +416,32 @@
     )
     
     (ok active)
+  )
+)
+
+(define-public (set-allowlist-enabled (property-id uint) (enabled bool))
+  (let (
+    (property-info (unwrap! (get-property property-id) err-not-found))
+  )
+    (asserts! (is-eq tx-sender (get owner property-info)) err-unauthorized)
+    (map-set property-allowlist-enabled
+      { property-id: property-id }
+      { enabled: enabled }
+    )
+    (ok enabled)
+  )
+)
+
+(define-public (set-allowlist-entry (property-id uint) (user principal) (allowed bool))
+  (let (
+    (property-info (unwrap! (get-property property-id) err-not-found))
+  )
+    (asserts! (is-eq tx-sender (get owner property-info)) err-unauthorized)
+    (map-set property-allowlist
+      { property-id: property-id, user: user }
+      { allowed: allowed }
+    )
+    (ok allowed)
   )
 )
 
@@ -563,6 +622,10 @@
   )
     (asserts! (>= proposer-balance min-stake) err-insufficient-stake)
     (asserts! (> voting-duration u0) err-invalid-amount)
+    (asserts! (> (len title) u0) err-invalid-amount)
+    (asserts! (> (len description) u0) err-invalid-amount)
+    (asserts! (> (len proposal-type) u0) err-invalid-amount)
+    (asserts! (<= amount-requested (get total-value property-info)) err-invalid-amount)
     
     (map-set governance-proposals
       { proposal-id: proposal-id }
@@ -680,4 +743,3 @@
     )
   )
 )
- 
