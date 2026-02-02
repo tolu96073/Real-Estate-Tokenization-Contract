@@ -844,3 +844,128 @@
 (define-read-only (get-maintenance-balance (property-id uint))
   (default-to u0 (get balance (map-get? maintenance-balances { property-id: property-id })))
 )
+
+;; P2P Token Marketplace Features
+
+(define-constant err-listing-not-found (err u123))
+(define-constant err-listing-not-active (err u124))
+(define-constant err-seller-only (err u125))
+
+(define-data-var listing-counter uint u0)
+
+(define-map token-listings
+  { listing-id: uint }
+  {
+    property-id: uint,
+    seller: principal,
+    token-amount: uint,
+    price: uint,
+    active: bool
+  }
+)
+
+(define-public (list-tokens-for-sale (property-id uint) (amount uint) (price uint))
+  (let (
+    (listing-id (+ (var-get listing-counter) u1))
+    (seller-balance (get-token-balance property-id tx-sender))
+  )
+    (asserts! (> amount u0) err-invalid-amount)
+    (asserts! (> price u0) err-invalid-amount)
+    (asserts! (>= seller-balance amount) err-insufficient-tokens)
+    
+    ;; Transfer tokens to contract (Escrow)
+    (map-set token-balances
+      { property-id: property-id, holder: tx-sender }
+      { balance: (- seller-balance amount) }
+    )
+    (map-set token-balances
+      { property-id: property-id, holder: (as-contract tx-sender) }
+      { balance: (+ (get-token-balance property-id (as-contract tx-sender)) amount) }
+    )
+    
+    (map-set token-listings
+      { listing-id: listing-id }
+      {
+        property-id: property-id,
+        seller: tx-sender,
+        token-amount: amount,
+        price: price,
+        active: true
+      }
+    )
+    
+    (var-set listing-counter listing-id)
+    (ok listing-id)
+  )
+)
+
+(define-public (buy-listed-tokens (listing-id uint))
+  (let (
+    (listing (unwrap! (map-get? token-listings { listing-id: listing-id }) err-listing-not-found))
+    (property-id (get property-id listing))
+    (seller (get seller listing))
+    (amount (get token-amount listing))
+    (price (get price listing))
+    (contract-balance (get-token-balance property-id (as-contract tx-sender)))
+    (buyer-balance (get-token-balance property-id tx-sender))
+  )
+    (asserts! (get active listing) err-listing-not-active)
+    
+    ;; Transfer STX from buyer to seller
+    (try! (stx-transfer? price tx-sender seller))
+    
+    ;; Transfer tokens from contract to buyer
+    (map-set token-balances
+      { property-id: property-id, holder: (as-contract tx-sender) }
+      { balance: (- contract-balance amount) }
+    )
+    (map-set token-balances
+      { property-id: property-id, holder: tx-sender }
+      { balance: (+ buyer-balance amount) }
+    )
+    
+    ;; Close listing
+    (map-set token-listings
+      { listing-id: listing-id }
+      (merge listing { active: false })
+    )
+    
+    (ok listing-id)
+  )
+)
+
+(define-public (cancel-listing (listing-id uint))
+  (let (
+    (listing (unwrap! (map-get? token-listings { listing-id: listing-id }) err-listing-not-found))
+    (property-id (get property-id listing))
+    (seller (get seller listing))
+    (amount (get token-amount listing))
+    (contract-balance (get-token-balance property-id (as-contract tx-sender)))
+    (seller-balance (get-token-balance property-id seller))
+  )
+    (asserts! (is-eq tx-sender seller) err-seller-only)
+    (asserts! (get active listing) err-listing-not-active)
+    
+    ;; Return tokens to seller
+    (map-set token-balances
+      { property-id: property-id, holder: (as-contract tx-sender) }
+      { balance: (- contract-balance amount) }
+    )
+    (map-set token-balances
+      { property-id: property-id, holder: seller }
+      { balance: (+ seller-balance amount) }
+    )
+    
+    ;; Close listing
+    (map-set token-listings
+      { listing-id: listing-id }
+      (merge listing { active: false })
+    )
+    
+    (ok listing-id)
+  )
+)
+
+(define-read-only (get-listing (listing-id uint))
+  (map-get? token-listings { listing-id: listing-id })
+)
