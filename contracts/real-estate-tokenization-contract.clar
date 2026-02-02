@@ -743,3 +743,104 @@
     )
   )
 )
+
+;; Rental Income Management Features
+
+(define-constant err-invalid-percentage (err u121))
+(define-constant err-not-tenant (err u122))
+
+(define-map property-rent-config
+  { property-id: uint }
+  {
+    tenant: principal,
+    rent-amount: uint,
+    maintenance-split: uint
+  }
+)
+
+(define-map maintenance-balances
+  { property-id: uint }
+  { balance: uint }
+)
+
+(define-public (configure-rent (property-id uint) (tenant principal) (rent-amount uint) (split uint))
+  (let (
+    (property-info (unwrap! (get-property property-id) err-not-found))
+  )
+    (asserts! (is-eq tx-sender (get owner property-info)) err-unauthorized)
+    (asserts! (> rent-amount u0) err-invalid-amount)
+    (asserts! (<= split u100) err-invalid-percentage)
+    
+    (map-set property-rent-config
+      { property-id: property-id }
+      {
+        tenant: tenant,
+        rent-amount: rent-amount,
+        maintenance-split: split
+      }
+    )
+    (ok true)
+  )
+)
+
+(define-public (pay-rent (property-id uint))
+  (let (
+    (rent-config (unwrap! (map-get? property-rent-config { property-id: property-id }) err-not-found))
+    (property-info (unwrap! (get-property property-id) err-not-found))
+    (current-dividends (unwrap! (get-property-dividends property-id) err-not-found))
+    (rent-amount (get rent-amount rent-config))
+    (maintenance-amount (/ (* rent-amount (get maintenance-split rent-config)) u100))
+    (dividend-amount (- rent-amount maintenance-amount))
+    (dividends-per-token (/ dividend-amount (get total-tokens property-info)))
+    (current-maintenance (default-to u0 (get balance (map-get? maintenance-balances { property-id: property-id }))))
+  )
+    (asserts! (is-eq tx-sender (get tenant rent-config)) err-not-tenant)
+    (asserts! (get active property-info) err-property-inactive)
+    
+    (try! (stx-transfer? rent-amount tx-sender (as-contract tx-sender)))
+    
+    (map-set maintenance-balances
+      { property-id: property-id }
+      { balance: (+ current-maintenance maintenance-amount) }
+    )
+    
+    (map-set property-dividends
+      { property-id: property-id }
+      {
+        total-dividends: (+ (get total-dividends current-dividends) dividend-amount),
+        dividends-per-token: (+ (get dividends-per-token current-dividends) dividends-per-token),
+        last-distribution: stacks-block-height
+      }
+    )
+    
+    (ok rent-amount)
+  )
+)
+
+(define-public (withdraw-maintenance (property-id uint) (amount uint))
+  (let (
+    (property-info (unwrap! (get-property property-id) err-not-found))
+    (current-maintenance (default-to u0 (get balance (map-get? maintenance-balances { property-id: property-id }))))
+  )
+    (asserts! (is-eq tx-sender (get owner property-info)) err-unauthorized)
+    (asserts! (>= current-maintenance amount) err-insufficient-tokens)
+    (asserts! (> amount u0) err-invalid-amount)
+    
+    (try! (as-contract (stx-transfer? amount (as-contract tx-sender) tx-sender)))
+    
+    (map-set maintenance-balances
+      { property-id: property-id }
+      { balance: (- current-maintenance amount) }
+    )
+    
+    (ok amount)
+  )
+)
+
+(define-read-only (get-rent-config (property-id uint))
+  (map-get? property-rent-config { property-id: property-id })
+)
+
+(define-read-only (get-maintenance-balance (property-id uint))
+  (default-to u0 (get balance (map-get? maintenance-balances { property-id: property-id })))
+)
